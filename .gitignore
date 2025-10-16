@@ -1,3 +1,90 @@
-# .env file
-.env
+# ---- OS cruft ----
+.DS_Store
+Thumbs.db
+desktop.ini
+$RECYCLE.BIN/
 
+# ---- Python bytecode / extensions ----
+__pycache__/
+*.py[cod]
+*.pyd
+*.so
+*.dylib
+
+# ---- Virtual environments ----
+.venv/
+venv/
+env/
+ENV/
+.python-version
+pip-wheel-metadata/
+
+# ---- Build / packaging ----
+build/
+dist/
+wheels/
+*.egg-info/
+.eggs/
+
+# ---- Caches ----
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.pyre/
+.hypothesis/
+.cache/
+
+# ---- Coverage ----
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+
+# ---- Logs & temp ----
+logs/*
+!logs/.gitkeep
+
+tmp/*
+!tmp/.gitkeep
+
+# Overflow attachments (created by the bot)
+tmp/overflow/
+
+# ---- Project data ----
+.chroma/
+
+# ---- Editors / IDEs ----
+.vscode/
+.idea/
+.history/
+*.code-workspace
+
+# ---- Notebooks ----
+.ipynb_checkpoints/
+
+# ---- Keys / credentials (keep examples) ----
+sa.json
+*service-account*.json
+*.pem
+*.key
+*.p12
+*.crt
+*.der
+*.cer
+*.pfx
+
+# ---- Env files (keep templates) ----
+.env
+.env.*
+*.env
+!/.env.example
+!/.env.ci
+!/.env.template
+
+# ---- Misc backups ----
+*.log
+*.tmp
+*.bak
+*.swp
+*.swo
+*~
