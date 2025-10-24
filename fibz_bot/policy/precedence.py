@@ -1,6 +1,7 @@
 from __future__ import annotations
 from typing import Dict, Any
 
+
 def deep_merge(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any]:
     out = dict(base)
     for k, v in override.items():
@@ -10,10 +11,14 @@ def deep_merge(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any]
             out[k] = v
     return out
 
-def resolve_instructions(core: Dict[str, Any], user: Dict[str, Any], server: Dict[str, Any]) -> Dict[str, Any]:
-    merged = deep_merge(server or {}, user or {})
-    merged = deep_merge(merged, core or {})
+
+def resolve_instructions(
+    core: Dict[str, Any], user: Dict[str, Any], server: Dict[str, Any]
+) -> Dict[str, Any]:
+    merged = deep_merge(server or {}, core or {})
+    merged = deep_merge(merged, user or {})
     return merged
+
 
 def build_prompt_text(core_text: str, user_text: str, server_text: str) -> str:
     sections = []

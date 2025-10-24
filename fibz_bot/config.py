@@ -1,6 +1,7 @@
 from pydantic_settings import BaseSettings
 from pydantic import Field
 
+
 class Settings(BaseSettings):
     # Discord
     DISCORD_BOT_TOKEN: str = Field(..., description="Discord bot token")
@@ -15,6 +16,9 @@ class Settings(BaseSettings):
 
     # Memory
     CHROMA_PATH: str = "./chroma_data"
+    ENTITY_REVISION_ENABLED: bool = True
+    ENTITY_MAX_FACTS: int = 12
+    ENTITY_ALLOW_SENSITIVE: bool = False
 
     # Policy defaults
     CROSS_CHANNEL_SHARING_DEFAULT: bool = False
@@ -36,5 +40,6 @@ class Settings(BaseSettings):
     class Config:
         env_file = ".env"
         extra = "ignore"
+
 
 settings = Settings()  # singleton
