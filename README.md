@@ -1,339 +1,192 @@
-# Fibz — Discord bot with Vertex AI (Gemini), ChromaDB memory, and consent-aware policy
+# Fibz — Gemini 2.5 Discord Bot (Python) · v0.5.0
 
-Fibz is a Python Discord bot that routes between **Gemini 2.5 Pro/Flash**, uses **ChromaDB** for retrieval memory, and enforces **privacy/consent** with instruction precedence (**core > user > server**). It supports document parsing, optional OCR, web search (Google CSE → DDG fallback), signed GCS uploads, inline citations, and admin utilities.
-
-> New here? See **Using Codex on this Repo** for step-by-step instructions to work with OpenAI’s Codex agent effectively.
+A privacy-first, multimodal Discord bot powered by **Google Vertex AI – Gemini 2.5** (Flash & Pro), with **persistent memory (ChromaDB)**, **consent-aware sharing**, PDF/image extraction with **inline citations**, optional **Google Cloud Storage** integration, and a growing set of admin/dev tools.
 
 ---
 
-## Quickstart
+## ✨ Highlights
 
+- **Gemini 2.5 Flash + Pro routing** (auto-picks Flash for short turns; escalates to Pro when reasoning/long context is needed)
+- **Multimodal understanding**: images/audio/video + files (PDF, DOCX, PPTX, TXT) → context for answers
+- **Inline citations** in answers: sources like `[file.pdf p.3]` appear next to claims
+- **PDF page-range hints** for targeted extraction: `page_hints:"paper.pdf:1-3,5; appendix.pdf:2"`
+- **Persistent, referenceable memory** (ChromaDB) with hybrid-lite retrieval and rich metadata
+- **Personalized personalities** with **instruction precedence**: **core > user > server/channel**
+- **Consent-aware privacy model**: per-user Allow/Deny DM flows; **cross-channel sharing** is a server toggle
+- **Web search tool** via Google Programmable Search Engine (fallback to DuckDuckGo Instant)
+- **Google Cloud Storage (optional)** for attachment archival + **signed URLs** (admin)
+- **Admin quality controls**: up/down **ratings** on answers
+- **Metrics** and status endpoints; GitHub Actions CI; prompt cache; JSON logging
+- **Discord 2000 char limit** handling by chunking multi-part responses (auto-splitting)
+
+> Roadmap (outlined in AGENTS docs / Codex prompt): retries/backoff, automatic `.txt` attachments for very long answers, richer purge filters, more tests, troubleshooting docs.
+
+---
+
+## 🧩 Features (detailed)
+
+- **Instruction precedence engine**: merges Core → User → Server/Channel into the system prompt, then appends runtime **Privacy & Consent** policy and **Capabilities**. The bot caches this merged prompt for performance.
+- **Consent & privacy**:
+  - Same-channel sharing permitted by default; **cross-channel** is opt-in per-server.
+  - When user B asks about user A, Fibz DMs A with **Allow/Deny** buttons; decision is cached by **scope/target** (e.g., per channel).
+- **Memory**:
+  - Stores messages (`messages`), internal context (`self_context` for personas, policies, ratings, consents), entities, archives.
+  - **Hybrid-lite retrieval**: vector similarity + lexical fusion.
+- **Ingestion**:
+  - **PDF/DOCX/PPTX/TXT** parsed into chunks; **Images** optionally OCR’d (Vision) with EXIF metadata; all feed the model.
+  - Extraction lines include `[filename p.N]` or `[filename slide N]` tags and are referenced inline in answers.
+- **Web search**:
+  - `web_search` tool uses **Google CSE** if keys present; otherwise **DDG Instant**.
+- **Storage (optional)**:
+  - Upload attachments to **GCS**; admins can **/sign** paths to get time-limited URLs.
+- **Observability & quality**:
+  - **/metrics** exposes counters for commands, tools, model choices + uptime.
+  - **/status** shows memory collection counts + uptime.
+  - Admins can **/rate_answer** with notes.
+
+---
+
+## 🛠️ Commands
+
+### Everyone
+- **`/ask question:"..." [page_hints:"paper.pdf:1-3,5; appendix.pdf:2"]`** — Ask Fibz; supports attachments; extracts and cites sources inline.
+- **`/ask_about user:@User question:"..."`** — Ask about someone else; triggers **consent** DM if needed.
+- **`/summarize`** *(attach a PDF)* — Indexes the PDF into memory; returns abstract + **page-referenced outline** with Sources.
+- **`/persona_set text:"..."`** — Save your personal instruction/persona (applies between core and server).
+- **`/privacy_status [page:1]`** — View your stored consent records (ephemeral).
+- **Message trigger:** mention the bot or `!fibz ...` — Works like `/ask`, including attachments & extraction.
+
+### Admin / Owner
+- **`/persona_server text:"..."`** — Set server persona. *(admin)*
+- **`/persona_core text:"..."`** — Set core persona (highest precedence). *(owner)*
+- **`/crosschannel enabled:true|false`** — Toggle cross-channel sharing of channel content. *(admin)*
+- **`/rate_answer message_link:"…" vote:up|down [note:"…"]`** — Record an answer rating with an optional note. *(admin)*
+- **`/sign path_in_bucket:"discord/filename.pdf"`** — Generate a **GCS signed URL**. *(admin)*
+- **`/metrics`** — JSON snapshot: counters (commands/tools/model choices), uptime. *(admin)*
+- **`/memory_find query:"..." [k:6]`** — Search memory with scores & tag snippets (channel-scoped). *(ephemeral)*
+- **`/memory_purge filter:'{...}' confirm:false`** — Dry-run delete by JSON metadata filter; set `confirm:true` to delete. *(admin)*
+- **`/status`** — Memory counts + uptime (ephemeral).
+
+---
+
+## 🚀 Getting Started
+
+### Prerequisites
+- **Python 3.10+**
+- **Discord bot token** (create at https://discord.com/developers/applications)
+- **Google Cloud** project with Vertex AI enabled and a service account (JSON key)
+- Optional:
+  - **Google Programmable Search Engine** (API key + CX) for web search
+  - **Google Cloud Storage** bucket for attachments/signed URLs
+  - **Cloud Vision API** for image OCR
+
+### Setup
 ```bash
-python -m pip install --upgrade pip
+# 1) Install
 pip install -e ".[dev]"
+
+# 2) Configure environment
 cp .env.example .env
+# Fill in: DISCORD_BOT_TOKEN, VERTEX_PROJECT_ID, VERTEX_LOCATION,
+# VERTEX_MODEL_FLASH, VERTEX_MODEL_PRO, VERTEX_EMBED_MODEL,
+# GOOGLE_APPLICATION_CREDENTIALS, CHROMA_PATH, FIBZ_OWNER_ID, etc.
+# Optional: GOOGLE_CSE_API_KEY, GOOGLE_CSE_CX, GCS_BUCKET, ENABLE_VISION_OCR=true
+
+# 3) Run
 python -m fibz_bot.bot.main
 ```
 
-### Dev loop
-
-```bash
-ruff --fix .
-black .
-mypy fibz_bot
-pytest -q
+### Environment variables (excerpt)
 ```
-
----
-
-## Repo Map (source of truth)
-
-```
-fibz_bot/
-  bot/main.py           # Discord entrypoint; defines slash commands & mention handler
-  llm/router.py         # Vertex init, model routing (Flash vs Pro), embeddings
-  llm/agent.py          # Function-calling loop; prompt cache; multimodal support
-  llm/tools.py          # Tools: retrieve_memory, store_memory, calculator, get_time, web_search
-  llm/prompts.py        # System prompt builder (+ inline citation instruction)
-  llm/cache.py          # Prompt cache (LRU-ish + TTL)
-  memory/store.py       # Chroma collections: message/self_context/entities/archives; ratings; consent
-  policy/precedence.py  # Instruction precedence (core > user > server) + prompt stitcher
-  policy/injector.py    # Runtime policy/consent text
-  policy/consent.py     # DM consent View (buttons) & helpers
-  ingest/attachments.py # Download Discord attachments, upload to GCS (optional), Gemini Parts
-  ingest/files.py       # Parse PDF/DOCX/PPTX/TXT (+ PDF page filtering)
-  ingest/images.py      # EXIF + optional Vision OCR
-  storage/gcs.py        # Upload & signed URLs (optional)
-  utils/logging.py      # JSON logger
-tests/                  # Unit tests (policy precedence, consent, etc.)
-scripts/run_bot.py      # Run helper
-pyproject.toml          # Tooling & deps
-.env.example            # Config template
-README.md               # This file
-AGENTS.md               # High-level guide for LLMs/agents (root)
-docs/AGENTS_GEMINI.md   # Gemini-specific details, examples, & tuning notes
-```
-
----
-
-## Slash Commands
-
-- `/ask question:"..." [page_hints:"file.pdf:1-3,5; other.pdf:2"]`
-- `/ask_about user:@User question:"..."`
-- `/summarize` *(attach a PDF)*
-- `/persona_core` *(owner)*, `/persona_server` *(admin)*, `/persona_set` *(user)*
-- `/crosschannel enabled:true|false`
-- `/rate_answer message_link:"..." vote:up|down [note:"..."]` *(admin)*
-- `/sign path_in_bucket:"discord/filename.pdf"` *(admin)*
-- `/status`
-
-Also supports `!fibz …` and mention triggers; attachments are handled.
-
----
-
-## Features
-
-- **Gemini 2.5** (Pro/Flash) with **function calling** tools
-- **ChromaDB** persistent memory + hybrid-lite retrieval
-- **Consent & privacy** with **instruction precedence:** **core > user > server**
-- **Cross-channel** toggle and per-scope consent
-- **Web search** via Google CSE → DDG fallback
-- **GCS** uploads & signed URLs (optional)
-- **PDF/DOCX/PPTX/TXT** parsing; **Vision OCR** (optional)
-- **Inline citations** like `[file p.N]` with a **Sources** block
-- **Prompt cache** and **admin ratings**
-- JSON logging & (planned) **/metrics**
-
----
-
-## Configuration & Secrets
-
-Create `.env` (see `.env.example`). Typical environment variables:
-
-```
-# Discord / OpenAI / Search
 DISCORD_BOT_TOKEN=...
-GCP_PROJECT_ID=...
-GCP_VERTEX_LOCATION=us-central1
-GOOGLE_APPLICATION_CREDENTIALS=/path/to/sa.json   # or Workload Identity
-GOOGLE_CSE_ID=...
-GOOGLE_CSE_API_KEY=...
 
-# Storage / Memory
-GCS_BUCKET=...               # optional
-CHROMA_PATH=.chroma
+# Vertex / Google Cloud
+VERTEX_PROJECT_ID=your_gcp_project
+VERTEX_LOCATION=us-central1
+VERTEX_MODEL_FLASH=gemini-2.5-flash
+VERTEX_MODEL_PRO=gemini-2.5-pro
+VERTEX_EMBED_MODEL=text-embedding-004
+GOOGLE_APPLICATION_CREDENTIALS=/abs/path/to/service_account.json
 
-# Search filtering (optional, comma-separated)
-ALLOW_DOMAINS=
-DENY_DOMAINS=
+# Memory & policy
+CHROMA_PATH=./chroma_data
+CROSS_CHANNEL_SHARING_DEFAULT=false
+DEFAULT_FLASH_RATIO=0.5
+
+# Ownership
+FIBZ_OWNER_ID=000000000000000000
+
+# Optional features
+ENABLE_VISION_OCR=false
+SPEECH_LANGUAGE=en-US
+GOOGLE_CSE_API_KEY=
+GOOGLE_CSE_CX=
+GCS_BUCKET=
+GCS_SIGN_URLS=true
+GCS_SIGN_URL_EXPIRY_SECONDS=86400
 ```
-
-**CI-specific template:** add `.env.ci` with placeholders (referenced in GitHub Actions secrets).
 
 ---
 
-## Consent & Instruction Precedence
+## 🔧 Customization
 
-> **Precedence:** `core > user > server`
-
-**System prompt construction**
-- Build from **CORE → USER → SERVER** policy layers.
-- Append **Capabilities** and **Privacy & Consent** sections to the final system message.
-- Preserve inline citation tags (e.g., `[file p.N]`) when statements are sourced from context.
-
-**Pseudocode**
-```py
-def decide(request, ctx):
-    # Merge rules with core highest priority
-    rules = merge(core, server, user)
-    if not rules.allow(request.scope):
-        return Deny(reason="scope denied", scope=request.scope)
-    if request.cross_channel and not rules.cross_channel:
-        return Deny(reason="cross-channel disabled", scope="cross_channel")
-    return Allow(expires_at=rules.expiry)
-```
-
-**Dataclass (canonical)**
-```py
-from dataclasses import dataclass
-from typing import Optional
-from datetime import datetime
-
-@dataclass
-class ConsentDecision:
-    allowed: bool
-    reason: str
-    scope: str
-    expires_at: Optional[datetime]
-```
-
-**Safety & consent specifics**
-- If **user B** asks about **user A**’s private info, require **DM consent** from A; **cache** the decision.
-- **Cross-channel sharing** only when the server toggle is enabled (deny otherwise).
+- **Personas**:
+  - **Core** (owner): `/persona_core`
+  - **User** (self): `/persona_set`
+  - **Server** (admin): `/persona_server`
+  - Merge order at runtime: **core > user > server/channel**
+- **Privacy defaults**:
+  - Same-channel sharing by default; toggle cross-channel via `/crosschannel`.
+- **Retrieval**:
+  - ChromaDB path via `CHROMA_PATH`; metadata includes guild/channel/user/tags; supports channel-only retrieval in tools.
 
 ---
 
-## Gemini Agent Behavior (from `docs/AGENTS_GEMINI.md`)
+## 🔒 Admin & Security
 
-**Tools**
-- `retrieve_memory` — fetch prior message/context history.
-- `store_memory` — store durable facts (avoid sensitive or disallowed scopes).
-- `web_search` — use sparingly for fresh info; prefer citations when used.
-- `calculator`, `get_time` — utility tools.
-
-**Routing**
-- Prefer **Gemini 2.5 Flash** by default.
-- Escalate to **Gemini 2.5 Pro** when `needs_reasoning=True` **or** token budget is **> 3k** for the current task.
-
-**Output rules**
-- Keep answers within **Discord limits**; the bot will **paginate or attach** overflow.
-- Always include **inline citations** like `[file p.N]` and a final **Sources** block when context or web search is used.
+- Admin-only commands are gated by Discord permissions (or owner ID for `/persona_core`).
+- Consent is required to share user-specific info that isn’t clearly public in the current channel.
+- Do **not** commit `.env` or keys. The bot logs in structured JSON (avoid secrets in logs).
 
 ---
 
-## Logging & Metrics
+## 🧪 Development
 
-**JSON log record (shape)**
-```json
-{
-  "ts": "2025-01-01T12:34:56.789Z",
-  "level": "INFO",
-  "event": "cmd.run",
-  "user_id": "…",
-  "guild_id": "…",
-  "cmd": "/ask",
-  "duration_ms": 123,
-  "pii_scrubbed": true
-}
-```
-
-**Metrics** (planned `/metrics`):
-- JSON **and** Prom-text endpoints
-- Counters: `cmd:/ask`, `cmd:/summarize`, `tool:web_search`, `tool:retrieve_memory`, …
-- Model histogram: `gemini-2.5-pro`, `gemini-2.5-flash`
-- `uptime_s`
+- **Linting/formatting**: `ruff --fix . && black .`
+- **Type checking**: `mypy fibz_bot`
+- **Tests**: `pytest -q` (lightweight tests included; no Vertex/Discord required)
+- **CI**: GitHub Actions workflow runs ruff, black (check), mypy, pytest on pushes/PRs.
 
 ---
 
-## Reliability & Overflow Policy
+## ❓ FAQ
 
-- **Retries/backoff**: wrap outbound calls (Vertex/GCS/CSE) with **exponential backoff + full jitter**; retry on `429`, `5xx`, and timeouts; never retry on `4xx` except `429`.
-- **Overflow handling**: if a response would exceed Discord limits or internal cap (default: ~1,800 chars of content), write a `.txt` to `./tmp/overflow/<uuid>.txt` and send as an attachment, with a short summary in-channel.
-- **Redaction**: never log secrets; truncate or hash identifiers; clip content previews to ≤120 chars.
+- **Does Gemini browse the web by itself?**  
+  No. Web is provided via the `web_search` tool (Google CSE if configured; DuckDuckGo Instant fallback).
 
----
+- **How does Fibz handle long answers?**  
+  It auto-splits into multiple messages. (Roadmap: attach `.txt` for very long outputs.)
 
-## CI
-
-A minimal CI should:
-- set up Python 3.10–3.12
-- `pip install -e ".[dev]"`
-- `ruff --fix . && black . && mypy fibz_bot && pytest -q`
-- upload coverage artifacts
-
-A sketch of `.github/workflows/ci.yml` is in **docs/CI.md** (or generate via Codex).
+- **Where are files stored?**  
+  Locally downloaded for processing; optionally uploaded to **GCS**. Extracted text is fed to the model and may be indexed into Chroma when you use `/summarize`.
 
 ---
 
-## Testing Strategy
+## 🗺️ Roadmap (next up)
 
-- **Discord**: mock the bot/client context; assert replies & permissions
-- **Vertex/Gemini**: stub client; simulate `429/5xx/TimeoutError` for backoff tests
-- **ChromaDB**: temp dir; seed fixtures for retrieval
-- **Web search**: fake HTTP client or fixture JSON; test allow/deny filters & pagination
-- **Policy**: property tests for precedence and consent revocation flows
-- **E2E**: ensure cross-channel denial blocks writes
+- Retry/backoff wrappers around Vertex & Discord operations
+- Automatic `.txt` attachments for very long answers
+- Richer purge filters (time windows/regex), domain allow/deny lists for web search
+- More tests and a Troubleshooting section
 
 ---
 
-## Web Search UX
+## 📝 Changelog
 
-Present results as bullets:
-
-```
-- [Title](url) — domain — snippet
-```
-
-Honor `ALLOW_DOMAINS` / `DENY_DOMAINS`, with tests for both.
-
----
-
-
-### The Bootstrap Snippet
-
-```
-Role: You are an expert Python engineer on Fibz (Discord bot using Gemini 2.5 Pro/Flash, ChromaDB, consent-aware policy).
-Repo map to edit: see README "Repo Map". Touch only those files unless necessary.
-
-Standards: Python ≥3.10, Ruff, Black 100 cols, mypy strict-ish, utils/logging.get_logger, no secret leaks.
-
-Consent precedence: core > user > server (see README for pseudocode + ConsentDecision dataclass).
-
-Output rules:
-1) Propose a 3–6 step plan.
-2) Return a minimal unified diff (≤200 lines if possible).
-3) Include/modify tests in `tests/` that prove acceptance.
-4) Print exact commands to run: `ruff --fix . && black . && mypy fibz_bot && pytest -q`.
-```
-
-### Task Templates
-
-**A) Retries/backoff**
-```
-Task: Add Tenacity-style backoff to Vertex, CSE, and GCS calls.
-Files: fibz_bot/llm/agent.py, fibz_bot/llm/router.py, fibz_bot/llm/tools.py, storage/gcs.py
-Requirements:
-- exp backoff + full jitter, base 0.5s, cap 8s, max 5 tries
-- retry on 429/5xx/TimeoutError; no retry on other 4xx
-- log attempt count and elapsed_ms via utils/logging.get_logger
-- overflow > ~1800 chars → tmp/overflow/<uuid>.txt attachment
-
-Acceptance:
-- tests simulate 429→success, 500→fail
-- mypy/lints/tests all pass
-```
-
-**B) `/metrics`**
-```
-Task: Add admin-only /metrics (JSON + Prom).
-Files: fibz_bot/infra/metrics.py (new), fibz_bot/bot/main.py, fibz_bot/llm/agent.py
-JSON schema:
-{"uptime_s": int, "counters": {...}, "models": {...}}
-Acceptance:
-- unit tests verify counters increment
-- e2e test checks authz & payload shape
-```
-
-**C) Privacy commands**
-```
-Task: Add /privacy_status and /privacy_revoke; enforce cross-channel everywhere.
-Files: policy/consent.py, policy/precedence.py, fibz_bot/bot/main.py, memory/store.py
-Acceptance:
-- revocation persists and blocks memory writes in cross-channel e2e test
-- audit log emitted on revoke
-```
-
-**D) Web search bullets + filters**
-```
-Task: Format search results as "- [Title](url) — domain — snippet", enforce ALLOW_DOMAINS/DENY_DOMAINS.
-Files: fibz_bot/llm/tools.py
-Acceptance: tests for filtering and pagination
-```
-
-**E) CI**
-```
-Task: Add .github/workflows/ci.yml with matrix 3.10–3.12, cache pip, run ruff/black/mypy/pytest, upload coverage artifact; create .env.ci template.
-Acceptance: CI passes on PR
-```
-
-### How to Prompt Codex Effectively
-
-1. **Paste the exact code excerpts** it must edit (or very small files).  
-2. **State acceptance criteria** as bullet points and tests it must add/modify.  
-3. **Ask for a single, minimal diff** plus the **tests** and **run commands**.  
-4. **Iterate**: run the commands locally; paste failures back with “patch only what fails.”
-
----
-
-## Documentation
-
-- `AGENTS.md` (root): high-level LLM guidance & repo map (this README mirrors/extends it)
-- `docs/AGENTS_GEMINI.md`: Gemini-specific tips, model selection, token/latency tradeoffs
-- `docs/TROUBLESHOOTING.md`: common errors, rate limits, CI failures
-- `CHANGELOG.md`: shipped changes by date
-
----
-
-## Acceptance Criteria (project-level)
-
-- Commands function end-to-end; consent flows persist & gate sharing
-- Long outputs are paginated or attached via overflow policy
-- Inline citations appear when sources exist
-- Lints/type checks/tests pass locally and in CI
-- Metrics and logs are emitted as specified
-
----
-
-## License
-
-MIT (or your preferred license).
+- **v0.5.0**
+  - Added **/metrics**, **/privacy_status**, **/memory_find**, **/memory_purge**
+  - Metrics wiring (model choices, tool calls, commands), CI workflow, minimal tests
+- **v0.4.x**
+  - Inline citations, page-range hints, `/summarize`, `/sign`, GCS & Vision OCR options
+- **v0.3.x**
+  - Initial Python scaffold: Gemini agent/tools, personas, consent policy, Chroma memory, web search
