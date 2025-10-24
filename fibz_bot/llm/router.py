@@ -47,3 +47,9 @@ class ModelRouter:
             operation="vertex_embed",
         )
         return [e.values for e in embeddings]
+
+try:
+    from vertexai.generative_models import GenerativeModel, Part, Content, SafetySetting, GenerationConfig
+except ImportError:
+    # Older SDKs used the preview path; keep linters quiet too
+    from vertexai.preview.generative_models import GenerativeModel, Part, Content, SafetySetting, GenerationConfig  # type: ignore[reportMissingImports]
