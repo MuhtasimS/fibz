@@ -238,11 +238,8 @@ Honor `ALLOW_DOMAINS` / `DENY_DOMAINS`, with tests for both.
 
 ---
 
-## Using **Codex** on this Repo
 
-> TL;DR — Codex does best with **small, verifiable tasks**. Always give it: file paths, tiny code excerpts to edit, interfaces/schemas, and acceptance criteria. Assume the web chat doesn’t auto-read your repo; either connect it in Codex Cloud or paste the relevant snippets.
-
-### The Bootstrap Snippet (paste into Codex at the start of a task)
+### The Bootstrap Snippet
 
 ```
 Role: You are an expert Python engineer on Fibz (Discord bot using Gemini 2.5 Pro/Flash, ChromaDB, consent-aware policy).
