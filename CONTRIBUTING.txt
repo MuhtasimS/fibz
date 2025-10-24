@@ -1,0 +1,61 @@
+# CONTRIBUTING.md — Fibz
+
+Thanks for contributing! This guide keeps changes small, testable, and consistent so CI stays green and Codex can help effectively.
+
+## Dev setup
+```bash
+python -m pip install --upgrade pip
+pip install -e ".[dev]"
+bash scripts/bootstrap.sh   # optional; same as above
+```
+If on Windows, ensure `.gitattributes` is present and that `.sh` files use LF endings.
+
+## Branches
+- Personal work: `feature/<short-topic>`
+- Codex tasks: `codex/<short-topic>` (e.g., `codex/retries-backoff`)
+- Create PRs into `main` for both.
+
+## Commit style
+- Keep commits small and focused. Example:
+  - `feat(privacy): add /privacy_status`
+  - `fix(retry): handle TimeoutError`
+  - `chore(ci): upload coverage`
+  - `test(policy): add precedence property tests`
+
+## Run checks locally (same as CI)
+```bash
+bash scripts/format.sh
+bash scripts/typecheck.sh
+bash scripts/test.sh
+# or
+bash scripts/ci_local.sh
+```
+
+## Environment variables
+- Use `.env` locally (copy from `.env.example`). Do **not** commit real secrets.
+- CI reads placeholders from `.env.ci` and real values from GitHub Actions **Secrets**.
+
+## Tests
+- Prefer **stubs/fixtures** for cloud or network calls.
+- New features must include tests in `tests/`.
+- For policy/consent, add property-style tests showing precedence `core > user > server`.
+
+## Coding standards
+- Python ≥ 3.10, type hints, mypy (strict-ish).
+- Format with Black (100 cols) and Ruff.
+- Use `utils/logging.get_logger` and never log secrets.
+- Preserve inline citations `[file p.N]` + Sources block when answers reference context.
+
+## Submitting a PR
+1. Rebase onto `main` (or sync your branch).  
+2. Ensure `bash scripts/ci_local.sh` passes.  
+3. Fill the PR template checklist.  
+4. Keep the diff minimal; avoid drive-by refactors unless requested.  
+5. If touching external calls (Vertex/GCS/CSE), include retry/backoff and unit tests.  
+6. Mention any config or secrets needed.
+
+## Release notes
+Update `CHANGELOG.md` with a short entry if the change is user-facing (commands, flags, or behavior).
+
+## Code of Conduct
+Be kind and constructive. Raise issues clearly; propose tests with fixes.
