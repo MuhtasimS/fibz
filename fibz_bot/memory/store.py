@@ -7,6 +7,21 @@ from fibz_bot.config import settings
 from fibz_bot.utils.logging import get_logger
 from fibz_bot.llm.router import ModelRouter
 from fibz_bot.utils.metrics import metrics
+# fibz_bot/memory/store.py
+from datetime import datetime
+import json as _json
+
+def _coerce_meta(md: dict) -> dict:
+    def conv(v):
+        if v is None or isinstance(v, (str, int, float, bool)):
+            return v
+        if isinstance(v, datetime):
+            return v.isoformat()
+        if isinstance(v, (list, dict, set, tuple)):
+            # Chroma doesn't accept arrays/objects → store as JSON string
+            return _json.dumps(list(v) if isinstance(v, set) else v, ensure_ascii=False)
+        return str(v)
+    return {k: conv(v) for k, v in md.items()}
 
 log = get_logger(__name__)
 
@@ -48,13 +63,13 @@ class MemoryStore:
     def upsert_message(self, message_id: str, content: str, meta: MessageMeta) -> None:
         vec = self.router.embed_texts([content])[0]
         self.messages.upsert(
-            ids=[message_id], documents=[content], embeddings=[vec], metadatas=[meta.model_dump()]
+            ids=[message_id], documents=[content], embeddings=[vec], metadatas=[_coerce_meta(meta.model_dump())],
         )
 
     def upsert_self_context(self, key: str, content: str, metadata: Dict[str, Any]) -> None:
         vec = self.router.embed_texts([content])[0]
         self.self_context.upsert(
-            ids=[key], documents=[content], embeddings=[vec], metadatas=[metadata]
+            ids=[key], documents=[content], embeddings=[vec], metadatas=[_coerce_meta(metadata)],
         )
 
     def _get_self_context_by_id(self, key: str) -> Optional[Dict[str, Any]]:
@@ -93,7 +108,7 @@ class MemoryStore:
         meta.setdefault("updated_at", datetime.utcnow().isoformat())
         vec = self.router.embed_texts([content])[0]
         self.entities.upsert(
-            ids=[entity_id], documents=[content], embeddings=[vec], metadatas=[meta]
+            ids=[entity_id], documents=[content], embeddings=[vec], metadatas=[_coerce_meta(meta)],
         )
         metrics.inc("entity.upserts")
 

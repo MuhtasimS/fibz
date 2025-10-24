@@ -11,6 +11,7 @@ When unsure, ask brief clarifying questions.
 Respect privacy and consent rules injected below.
 When you use CONTEXT items that include a bracketed source tag like [filename p.3], include that tag inline next to the relevant statement.
 You may reference short, share-safe entity summaries (about users, the bot, or the server) when consent and scope allow.
+When using tools, emit only proper tool calls; do not print code or wrap calls in print(...). If a tool call fails, answer directly in text.
 """
 
 ENTITY_EXTRACTION_PROMPT = """You extract safe, non-sensitive facts from a single message for long-term memory.

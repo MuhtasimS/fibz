@@ -23,10 +23,73 @@ from fibz_bot.utils.logging import get_logger
 from fibz_bot.utils.metrics import metrics, record_command
 from fibz_bot.utils.overflow import prepare_overflow_text
 
+import time
+import datetime as _dt
+from collections import deque
+import re
+
+# --- de-dupe cache for message IDs ---
+_PROCESSED_MSGS = set()
+_PROCESSED_ORDER = deque(maxlen=2048)
+
+def _mark_processed(message_id: int) -> bool:
+    """Return True if already processed; else mark and return False."""
+    if message_id in _PROCESSED_MSGS:
+        return True
+    _PROCESSED_MSGS.add(message_id)
+    _PROCESSED_ORDER.append(message_id)
+    if len(_PROCESSED_MSGS) > _PROCESSED_ORDER.maxlen:
+        while len(_PROCESSED_MSGS) > _PROCESSED_ORDER.maxlen:
+            old = _PROCESSED_ORDER.popleft()
+            _PROCESSED_MSGS.discard(old)
+    return False
+
+def _iso_to_dt(s: str) -> _dt.datetime:
+    try:
+        return _dt.datetime.fromisoformat(s.replace("Z", "+00:00"))
+    except Exception:
+        return _dt.datetime.min
+
+def build_recent_dialogue(memory, guild_id: str, channel_id: str, user_id: str, max_user: int = 5, max_bot: int = 5) -> str:
+    """Compact transcript of recent turns (newest last)."""
+    user_msgs = memory.list_messages(where={"guild_id": guild_id, "channel_id": channel_id, "user_id": user_id}, limit=200)
+    bot_msgs  = memory.list_messages(where={"guild_id": guild_id, "channel_id": channel_id, "role": "assistant"}, limit=200)
+
+    def norm(items):
+        out = []
+        for i in items.get("items", []):
+            meta = i.get("meta") or i.get("metadata") or {}
+            created = meta.get("created_at") or meta.get("createdAt") or ""
+            dt = _iso_to_dt(created if isinstance(created, str) else str(created))
+            out.append({
+                "when": dt,
+                "role": meta.get("role") or ("assistant" if meta.get("user_id") == str(bot.user.id if bot.user else 0) else "user"),
+                "text": i.get("text") or i.get("document") or i.get("content") or "",
+            })
+        return out
+
+    u = sorted(norm(user_msgs), key=lambda x: x["when"])[-max_user:]
+    b = sorted(norm(bot_msgs),  key=lambda x: x["when"])[-max_bot:]
+    merged = sorted(u + b, key=lambda x: x["when"])
+
+    lines = ["### RECENT DIALOGUE (newest last)"]
+    for m in merged:
+        role = "Fibz" if m["role"] == "assistant" else "User"
+        text = (m["text"] or "").strip()
+        if not text:
+            continue
+        if len(text) > 500:
+            text = text[:500] + " …"
+        lines.append(f"{role}: {text}")
+    return "\n".join(lines) if len(lines) > 1 else ""
+
+
+
 log = get_logger(__name__)
 
 INTENTS = discord.Intents.default()
 INTENTS.message_content = True
+INTENTS.messages = True
 INTENTS.guilds = True
 INTENTS.members = True
 
@@ -51,6 +114,13 @@ def is_owner(user: discord.abc.User) -> bool:
         return str(user.id) == str(settings.FIBZ_OWNER_ID)
     except Exception:
         return False
+
+@bot.tree.command(description="Owner: sync slash commands")
+async def sync(interaction: discord.Interaction):
+    if str(interaction.user.id) != settings.FIBZ_OWNER_ID:
+        return await interaction.response.send_message("Nope.", ephemeral=True)
+    await bot.tree.sync(guild=interaction.guild)  # fast guild sync
+    await interaction.response.send_message("Synced ✅", ephemeral=True)
 
 
 @bot.event
@@ -397,8 +467,28 @@ async def ask(interaction: discord.Interaction, question: str, page_hints: str |
 
 
 @bot.tree.command(description="Ask about a user with consent-aware checks.")
-@app_commands.describe(user="Target user", question="Your question")
-async def ask_about(interaction: discord.Interaction, user: discord.Member, question: str):
+@app_commands.describe(
+    user="Pick the target user from the dropdown (or type a mention/ID)",
+    question="Your question about that user",
+)
+async def ask_about(interaction: discord.Interaction, user: discord.User, question: str):
+    if interaction.guild is None:
+        return await interaction.response.send_message(
+            "Use this command in a server channel.", ephemeral=True
+        )
+
+    # Try to resolve to a Member (for nicer display names/roles)
+    member = interaction.guild.get_member(user.id)
+    if member is None:
+        try:
+            member = await interaction.guild.fetch_member(user.id)
+        except Exception:
+            member = None
+
+    # Safe display names (User lacks display_name)
+    requester_display = getattr(interaction.user, "display_name", None) or interaction.user.name  # <-- changed
+    target_display = getattr(member, "display_name", None) or getattr(user, "display_name", None) or user.name     # <-- changed
+
     record_command("ask_about")
     await interaction.response.defer(ephemeral=False)
 
@@ -426,7 +516,7 @@ async def ask_about(interaction: discord.Interaction, user: discord.Member, ques
             scope,
             target_key,
             interaction,
-            requester_name=interaction.user.display_name,
+            requester_name=requester_display,   # <-- changed
         )
         if not granted:
             return await interaction.followup.send(
@@ -449,7 +539,7 @@ async def ask_about(interaction: discord.Interaction, user: discord.Member, ques
         else:
             channels = {str(c) for c in raw_channels}
         if cross_enabled or str(interaction.channel_id) in channels:
-            display = meta.get("display_name") or user.display_name
+            display = meta.get("display_name") or target_display   # <-- changed
             entity_context.append(f"### ENTITY: {display}\n{entity_doc.get('document', '')}")
 
     where = {"user_id": str(user.id)}
@@ -472,9 +562,9 @@ async def ask_about(interaction: discord.Interaction, user: discord.Member, ques
             "user_id": str(interaction.user.id),
             "memory": memory,
         },
-    )
-    answer = answer or ""
+    ) or ""
 
+    # persist Q/A
     memory.upsert_message(
         message_id=f"{interaction.id}-qa",
         content=question,
@@ -506,7 +596,7 @@ async def ask_about(interaction: discord.Interaction, user: discord.Member, ques
         router,
         memory,
         author_id=str(interaction.user.id),
-        author_display=interaction.user.display_name,
+        author_display=requester_display,   # <-- changed
         guild_id=str(interaction.guild_id),
         channel_id=str(interaction.channel_id),
         message_text=question,
@@ -514,14 +604,14 @@ async def ask_about(interaction: discord.Interaction, user: discord.Member, ques
         is_owner=is_owner(interaction.user),
     )
 
-    display, attachment_path = prepare_overflow_text(answer)
+    display_text, attachment_path = prepare_overflow_text(answer)
     if attachment_path:
         await interaction.followup.send(
-            display,
+            display_text,
             file=discord.File(str(attachment_path), filename=attachment_path.name),
         )
     else:
-        await interaction.followup.send(display)
+        await interaction.followup.send(display_text)
 
 
 # ---- Summarize PDF ----
@@ -690,85 +780,175 @@ async def entity_refresh(interaction: discord.Interaction, user: discord.Member)
     )
 
 
+from fibz_bot.ingest.attachments import make_parts_from_attachments, cleanup_temp
+from fibz_bot.utils.overflow import prepare_overflow_text
+from fibz_bot.llm.revision import run_entity_revision_pass
+from fibz_bot.memory.store import MessageMeta
+
 @bot.event
 async def on_message(message: discord.Message):
-    if message.author.bot:
+    # --- hard guards ---
+    if message.author.bot or message.webhook_id:
         return
-    if bot.user and (
-        bot.user.mentioned_in(message) or message.content.strip().lower().startswith("!fibz")
-    ):
-        record_command("mention")
-        query = message.content.replace("!fibz", "").strip()
+    if _mark_processed(message.id):
+        return  # de-dupe
 
-        core, user_instr, server = get_core_user_server(
-            str(message.guild.id if message.guild else ""), str(message.author.id)
-        )
-        policy_text = make_policy_text(
-            memory, str(message.guild.id if message.guild else ""), str(message.channel.id)
-        )
+    # --- trigger policy: prefix or mention (or channel toggle if you have one) ---
+    content = (message.content or "").strip()
+    is_prefix = content.startswith("!fibz")
+    is_mention = bool(bot.user and bot.user in message.mentions)
+    respond_all = False  # set to a real toggle if you support "respond to all" per-channel
 
-        where = {"channel_id": str(message.channel.id)}
-        ctx = memory.retrieve(query, k=6, where=where)
-        docs = ctx.get("documents", []) or []
-        entity_docs: list[str] = []
-        if settings.ENTITY_REVISION_ENABLED:
-            bot_entity = memory.get_entity("bot:self")
-            if bot_entity:
-                meta = bot_entity.get("metadata", {}) or {}
-                display = meta.get("display_name") or "Fibz"
-                entity_docs.append(f"### ENTITY: {display}\n{bot_entity.get('document', '')}")
+    if not (respond_all or is_prefix or is_mention):
+        # still allow classic commands to work if you have any
+        try:
+            await bot.process_commands(message)
+        finally:
+            return
 
-        media_parts, paths, metas = ([], [], [])
-        if message.attachments:
-            media_parts, paths, metas = make_parts_from_attachments(message.attachments)
-            # optional extraction
-            extracted = []
-            for p, meta in zip(paths, metas):
-                extracted.extend(extract_from_local(p, filename_hint=meta.get("filename")))
-            docs = entity_docs + docs + extracted
-        else:
-            docs = entity_docs + docs
+    # --- build the user query (strip prefix/mention) ---
+    query = content
+    if is_prefix:
+        query = content[len("!fibz"):].strip()
+    elif is_mention and bot.user:
+        # remove leading mention only
+        mention_forms = {f"<@{bot.user.id}>", f"<@!{bot.user.id}>"}
+        for mtxt in mention_forms:
+            if query.startswith(mtxt):
+                query = query[len(mtxt):].strip()
+                break
 
-        answer = agent.run(
-            question=query,
-            core=core,
-            user=user_instr,
-            server=server,
-            policy_text=policy_text,
-            context_docs=docs,
-            media_parts=media_parts,
-            needs_reasoning=False,
-            request_context={
-                "guild_id": str(message.guild.id if message.guild else ""),
-                "channel_id": str(message.channel.id),
-                "user_id": str(message.author.id),
-                "memory": memory,
-            },
-        )
-        answer = answer or ""
+    # --- personas and policy ---
+    core, user_instr, server = get_core_user_server(
+        str(message.guild.id) if message.guild else None,
+        str(message.author.id)
+    )
+    policy_text = make_policy_text(memory, str(message.guild.id) if message.guild else None, str(message.channel.id))
 
+    # --- retrieval (channel-scoped) ---
+    where = {"channel_id": str(message.channel.id)}
+    ctx = memory.retrieve(query, k=6, where=where)
+    docs = ctx.get("documents", []) or []
+
+    # --- entity context (bot + target user) ---
+    entity_docs: list[str] = []
+    if settings.ENTITY_REVISION_ENABLED:
+        bot_entity = memory.get_entity("bot:self")
+        if bot_entity and bot_entity.get("document"):
+            bd = bot_entity["document"]
+            meta = bot_entity.get("metadata", {}) or {}
+            display = meta.get("display_name") or "Fibz"
+            entity_docs.append(f"### ENTITY: {display}\n{bd}")
+
+        user_entity = memory.get_entity(f"user:{message.author.id}")
+        if user_entity and user_entity.get("document"):
+            ud = user_entity["document"]
+            display = message.author.display_name if hasattr(message.author, "display_name") else message.author.name
+            entity_docs.append(f"### ENTITY: {display}\n{ud}")
+
+    # --- attachments → media parts + optional extraction context ---
+    media_parts, paths, metas = make_parts_from_attachments(message.attachments)
+    try:
+        # If you also want extraction to text for PDFs/images, do it here and extend docs.
+        # (You already have helpers elsewhere; keep as-is if wired.)
+        pass
+    finally:
         cleanup_temp(paths)
 
-        display, attachment_path = prepare_overflow_text(answer)
-        if attachment_path:
-            await message.channel.send(
-                display,
-                file=discord.File(str(attachment_path), filename=attachment_path.name),
-            )
-        else:
-            await message.channel.send(display)
+    # --- include recent 5 user + 5 bot exchanges ---
+    recent = build_recent_dialogue(
+        memory,
+        guild_id=str(message.guild.id),
+        channel_id=str(message.channel.id),
+        user_id=str(message.author.id),
+        max_user=5,
+        max_bot=5,
+    )
+    context_docs = []
+    if recent:
+        context_docs.append(recent)
+    context_docs.extend(entity_docs)
+    context_docs.extend(docs)
 
+    # --- run the agent ---
+    answer = agent.run(
+        question=query,
+        core=core,
+        user=user_instr,
+        server=server,
+        policy_text=policy_text,
+        context_docs=context_docs,
+        media_parts=media_parts if media_parts else None,
+        needs_reasoning=False,
+        request_context={
+            "memory": memory,
+            "guild_id": str(message.guild.id),
+            "channel_id": str(message.channel.id),
+            "user_id": str(message.author.id),
+        },
+    ) or ""
+
+    # --- store Q/A (so future turns can see it) ---
+    memory.upsert_message(
+        message_id=f"{message.id}-q",
+        content=query,
+        meta=MessageMeta(
+            message_id=f"{message.id}-q",
+            guild_id=str(message.guild.id),
+            channel_id=str(message.channel.id),
+            user_id=str(message.author.id),
+            role="user",
+            persona="user",
+            tags=["chat"],
+        ),
+    )
+    memory.upsert_message(
+        message_id=f"{message.id}-a",
+        content=answer,
+        meta=MessageMeta(
+            message_id=f"{message.id}-a",
+            guild_id=str(message.guild.id),
+            channel_id=str(message.channel.id),
+            user_id=str(bot.user.id if bot.user else 0),
+            role="assistant",
+            persona="core",
+            tags=["chat", "answer"],
+        ),
+    )
+
+    # --- revision pass (safe to run; we hardened it earlier) ---
+    try:
         await run_entity_revision_pass(
             router,
             memory,
             author_id=str(message.author.id),
-            author_display=message.author.display_name,
-            guild_id=str(message.guild.id) if message.guild else None,
+            author_display=getattr(message.author, "display_name", None) or message.author.name,
+            guild_id=str(message.guild.id),
             channel_id=str(message.channel.id),
             message_text=query,
             answer_text=answer,
             is_owner=is_owner(message.author),
         )
+    except Exception:
+        log.exception("entity revision pass failed")
+
+    # --- handle Discord 2k limit via overflow helper ---
+    display, attachment_path = prepare_overflow_text(answer)
+    if attachment_path:
+        await message.channel.send(
+            display,
+            reference=message,
+            file=discord.File(str(attachment_path), filename=attachment_path.name),
+        )
+    else:
+        await message.reply(display, mention_author=False)
+
+    # If you still use classic @bot.command() commands elsewhere:
+    try:
+        await bot.process_commands(message)
+    except Exception:
+        pass
+
 
 
 if __name__ == "__main__":

@@ -93,3 +93,4 @@ sa.json
 *~
 scripts/set_core_persona.py
 scripts/migrate_legacy.py
+scripts/migrate_legacy_onepass.py

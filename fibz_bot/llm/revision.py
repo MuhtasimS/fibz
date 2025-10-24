@@ -38,22 +38,57 @@ def _build_payload(
     return "\n".join(lines)
 
 
+def _safe_text(resp) -> str:
+    """Safely extract text from a Vertex response; tolerate empty/blocked candidates."""
+    try:
+        t = getattr(resp, "text", "")
+        if t:
+            return t
+    except Exception:
+        pass
+    # Fallback: walk candidates → content.parts → text
+    try:
+        for cand in getattr(resp, "candidates", []) or []:
+            content = getattr(cand, "content", None)
+            parts = getattr(content, "parts", None) if content else None
+            if parts:
+                texts = [getattr(p, "text", "") for p in parts if getattr(p, "text", "")]
+                if texts:
+                    return "\n".join(texts)
+    except Exception:
+        pass
+    return ""
+
+
 def extract_entities(router: ModelRouter, payload: str) -> dict[str, Any]:
     prompt = ENTITY_EXTRACTION_PROMPT.strip() + "\n\n" + payload.strip()
     resp = retry(
         lambda: router.model_flash.generate_content(
-            [Part.from_text(prompt)],
-            generation_config={"max_output_tokens": 512},
+            contents=[Part.from_text(prompt)],
+            generation_config={
+                "max_output_tokens": 256,
+                # If your SDK supports it, uncomment to enforce JSON:
+                # "response_mime_type": "application/json",
+            },
         ),
         operation="entity_revision",
     )
-    text = getattr(resp, "text", "") or ""
+
+    text = _safe_text(resp)
+    if not text:
+        # Nothing to parse — return empty result to avoid crashing the caller
+        log.info("entity_revision_no_text", extra={"extra_fields": {"reason": "empty_response"}})
+        return {}
+
+    # Try strict JSON first
     try:
         data = json.loads(text)
         if isinstance(data, dict):
             return data
-    except json.JSONDecodeError:
+    except Exception:
         pass
+
+    # Try to recover the largest JSON object span
     try:
         start = text.index("{")
         end = text.rindex("}") + 1
@@ -62,7 +97,8 @@ def extract_entities(router: ModelRouter, payload: str) -> dict[str, Any]:
             return data
     except Exception:
         log.warning("entity_revision_parse_failed", extra={"extra_fields": {"raw": text[:200]}})
-    return {"facts": [], "targets": [], "sensitive": []}
+
+    return {}  # final fallback — caller will treat as no facts/targets
 
 
 def _clean_facts(items: Iterable[str]) -> list[str]:
@@ -70,9 +106,7 @@ def _clean_facts(items: Iterable[str]) -> list[str]:
     facts: list[str] = []
     for item in items:
         item = (item or "").strip()
-        if not item:
-            continue
-        if item in seen:
+        if not item or item in seen:
             continue
         seen.add(item)
         facts.append(item)
@@ -108,7 +142,7 @@ async def run_entity_revision_pass(
         answer_text=answer_text,
     )
 
-    data = extract_entities(router, payload)
+    data = extract_entities(router, payload) or {}
     facts = _clean_facts(data.get("facts", []))
     if not facts:
         return
@@ -135,8 +169,11 @@ async def run_entity_revision_pass(
     for target in target_list:
         entity_id = target.get("entity_id") or default_entity
         entity_id = str(entity_id)
+
+        # Guard: don't write other users' entities based on this author
         if entity_id.startswith("user:") and entity_id != default_entity:
             continue
+        # Only owners can update bot:self
         if entity_id == "bot:self" and not is_owner and entity_id != default_entity:
             continue
 
@@ -145,8 +182,7 @@ async def run_entity_revision_pass(
         existing_meta = existing.get("metadata", {}) if isinstance(existing, dict) else {}
 
         existing_facts = _clean_facts(line.lstrip("- ") for line in existing_doc.splitlines())
-        combined = _clean_facts(facts + existing_facts)
-        combined = combined[: settings.ENTITY_MAX_FACTS]
+        combined = _clean_facts(facts + existing_facts)[: settings.ENTITY_MAX_FACTS]
         if not combined:
             continue
 
@@ -171,9 +207,7 @@ async def run_entity_revision_pass(
             "source": "auto_revision",
             "updated_at": datetime.utcnow().isoformat(),
             "guild_id": guild_id,
-            "channels": (
-                ",".join(sorted(channels)) if channels else existing_meta.get("channels", "")
-            ),
+            "channels": ",".join(sorted(channels)) if channels else existing_meta.get("channels", ""),
         }
         content = "\n".join(f"- {fact}" for fact in combined)
         memory.upsert_entity(entity_id, content, metadata)
