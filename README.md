@@ -10,7 +10,7 @@ A privacy-first, multimodal Discord bot powered by **Google Vertex AI – Gemini
 - **Multimodal understanding**: images/audio/video + files (PDF, DOCX, PPTX, TXT) → context for answers
 - **Inline citations** in answers: sources like `[file.pdf p.3]` appear next to claims
 - **PDF page-range hints** for targeted extraction: `page_hints:"paper.pdf:1-3,5; appendix.pdf:2"`
-- **Persistent, referenceable memory** (ChromaDB) with hybrid-lite retrieval and rich metadata
+- **Persistent, referenceable memory** (ChromaDB) with hybrid-lite retrieval, **entity summaries**, and rich metadata
 - **Personalized personalities** with **instruction precedence**: **core > user > server/channel**
 - **Consent-aware privacy model**: per-user Allow/Deny DM flows; **cross-channel sharing** is a server toggle
 - **Web search tool** via Google Programmable Search Engine (fallback to DuckDuckGo Instant)
@@ -62,6 +62,8 @@ A privacy-first, multimodal Discord bot powered by **Google Vertex AI – Gemini
 - **`/crosschannel enabled:true|false`** — Toggle cross-channel sharing of channel content. *(admin)*
 - **`/rate_answer message_link:"…" vote:up|down [note:"…"]`** — Record an answer rating with an optional note. *(admin)*
 - **`/sign path_in_bucket:"discord/filename.pdf"`** — Generate a **GCS signed URL**. *(admin)*
+- **`/entity_debug id:"bot:self"`** — Inspect an entity summary (ephemeral). *(owner)*
+- **`/entity_refresh user:@User`** — Rebuild a consent-allowed entity summary from recent channel messages. *(admin)*
 - **`/metrics`** — JSON snapshot: counters (commands/tools/model choices), uptime. *(admin)*
 - **`/memory_find query:"..." [k:6]`** — Search memory with scores & tag snippets (channel-scoped). *(ephemeral)*
 - **`/memory_purge filter:'{...}' confirm:false`** — Dry-run delete by JSON metadata filter; set `confirm:true` to delete. *(admin)*
@@ -112,6 +114,9 @@ GOOGLE_APPLICATION_CREDENTIALS=/abs/path/to/service_account.json
 CHROMA_PATH=./chroma_data
 CROSS_CHANNEL_SHARING_DEFAULT=false
 DEFAULT_FLASH_RATIO=0.5
+ENTITY_REVISION_ENABLED=true
+ENTITY_MAX_FACTS=12
+ENTITY_ALLOW_SENSITIVE=false
 
 # Ownership
 FIBZ_OWNER_ID=000000000000000000

@@ -10,8 +10,31 @@ You can use tools via function calling when needed. Prefer:
 When unsure, ask brief clarifying questions.
 Respect privacy and consent rules injected below.
 When you use CONTEXT items that include a bracketed source tag like [filename p.3], include that tag inline next to the relevant statement.
+You may reference short, share-safe entity summaries (about users, the bot, or the server) when consent and scope allow.
 """
+
+ENTITY_EXTRACTION_PROMPT = """You extract safe, non-sensitive facts from a single message for long-term memory.
+
+Return strict JSON:
+{
+  "facts": [ "short, declarative fact", ... ],
+  "targets": [ {"entity_id": "user:<id>|bot:self|server:<guild>", "kind":"user|bot|server", "display_name": "<optional>"} ],
+  "sensitive": [ "brief description of any sensitive items you refused", ... ]
+}
+
+Guidelines:
+- Only keep non-sensitive, share-safe facts unless explicit consent applies.
+- Prefer durable attributes (skills, preferences stated as public, time zones if user provided them voluntarily in-channel, project updates the bot should remember).
+- Skip health, finances, precise location, or private identifiers.
+"""
+
 
 def make_system_prompt(core_text: str, user_text: str, server_text: str, policy_text: str) -> str:
     instr = build_prompt_text(core_text, user_text, server_text)
-    return instr + "\n\n### CAPABILITIES\n" + CAPABILITIES_TEXT.strip() + "\n\n### PRIVACY & CONSENT\n" + policy_text.strip()
+    return (
+        instr
+        + "\n\n### CAPABILITIES\n"
+        + CAPABILITIES_TEXT.strip()
+        + "\n\n### PRIVACY & CONSENT\n"
+        + policy_text.strip()
+    )
