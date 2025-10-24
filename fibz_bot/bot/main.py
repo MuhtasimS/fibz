@@ -1,19 +1,25 @@
 from __future__ import annotations
-import re, os, json
+
+import json
+import os
+import re
+
 import discord
 from discord import app_commands
 from discord.ext import commands
+
 from fibz_bot.config import settings
-from fibz_bot.utils.logging import get_logger
-from fibz_bot.utils.metrics import metrics, record_command
+from fibz_bot.ingest.attachments import cleanup_temp, make_parts_from_attachments
+from fibz_bot.ingest.files import parse_docx, parse_pptx, parse_text
+from fibz_bot.ingest.images import parse_image
+from fibz_bot.llm.agent import Agent
 from fibz_bot.llm.router import ModelRouter
 from fibz_bot.memory.store import MemoryStore, MessageMeta
 from fibz_bot.policy.injector import make_policy_text
-from fibz_bot.llm.agent import Agent
-from fibz_bot.ingest.attachments import make_parts_from_attachments, cleanup_temp
-from fibz_bot.ingest.files import parse_pdf, parse_docx, parse_pptx, parse_text
-from fibz_bot.ingest.images import parse_image
 from fibz_bot.storage.gcs import sign_url
+from fibz_bot.utils.logging import get_logger
+from fibz_bot.utils.metrics import metrics, record_command
+from fibz_bot.utils.overflow import prepare_overflow_text
 
 log = get_logger(__name__)
 
@@ -145,7 +151,10 @@ async def memory_find(interaction: discord.Interaction, query: str, k: int = 6):
 
 # ---- memory_purge ----
 @bot.tree.command(description="Purge memory items by simple filter (admin only).")
-@app_commands.describe(filter="JSON where filter, e.g. '{"channel_id":"123"}'", confirm="Set true to actually delete")
+@app_commands.describe(
+    filter='JSON where filter, e.g. \'{"channel_id":"123"}\'',
+    confirm="Set true to actually delete",
+)
 async def memory_purge(interaction: discord.Interaction, filter: str, confirm: bool = False):
     record_command("memory_purge")
     if not interaction.user.guild_permissions.administrator:
@@ -266,6 +275,7 @@ async def ask(interaction: discord.Interaction, question: str, page_hints: str |
             "memory": memory,
         }
     )
+    answer = answer or ""
 
     cleanup_temp(paths)
 
@@ -304,12 +314,14 @@ async def ask(interaction: discord.Interaction, question: str, page_hints: str |
                 uniq.append(tag); seen.add(tag)
         answer = (answer or "") + "\n\n**Sources**:\n" + "\n".join(f"- {t}" for t in uniq[:20])
 
-    if len(answer) <= 1900:
-        await interaction.followup.send(answer)
+    display, attachment_path = prepare_overflow_text(answer)
+    if attachment_path:
+        await interaction.followup.send(
+            display,
+            file=discord.File(str(attachment_path), filename=attachment_path.name),
+        )
     else:
-        chunks = [answer[i:i+1900] for i in range(0, len(answer), 1900)]
-        for i, ch in enumerate(chunks, start=1):
-            await interaction.followup.send(f"(Part {i}/{len(chunks)})\n{ch}")
+        await interaction.followup.send(display)
 
 # ---- Summarize PDF ----
 @bot.tree.command(description="Summarize an attached PDF, index it to memory, and produce a page-referenced outline.")
@@ -369,6 +381,7 @@ async def summarize(interaction: discord.Interaction):
             "memory": memory,
         }
     )
+    answer = answer or ""
 
     labels = []
     for line in context_lines:
@@ -384,12 +397,14 @@ async def summarize(interaction: discord.Interaction):
 
     cleanup_temp(paths)
 
-    if len(answer) <= 1900:
-        await interaction.followup.send(answer)
+    display, attachment_path = prepare_overflow_text(answer)
+    if attachment_path:
+        await interaction.followup.send(
+            display,
+            file=discord.File(str(attachment_path), filename=attachment_path.name),
+        )
     else:
-        chunks = [answer[i:i+1900] for i in range(0, len(answer), 1900)]
-        for i, ch in enumerate(chunks, start=1):
-            await interaction.followup.send(f"(Part {i}/{len(chunks)})\n{ch}")
+        await interaction.followup.send(display)
 
 @bot.tree.command(description="Create a signed URL for a GCS object path (admin only).")
 @app_commands.describe(path_in_bucket="e.g., 'discord/filename.pdf'")
@@ -442,10 +457,18 @@ async def on_message(message: discord.Message):
                 "memory": memory,
             }
         )
+        answer = answer or ""
 
         cleanup_temp(paths)
 
-        await message.channel.send(answer[:1900])
+        display, attachment_path = prepare_overflow_text(answer)
+        if attachment_path:
+            await message.channel.send(
+                display,
+                file=discord.File(str(attachment_path), filename=attachment_path.name),
+            )
+        else:
+            await message.channel.send(display)
 
 if __name__ == "__main__":
     bot.run(settings.DISCORD_BOT_TOKEN)

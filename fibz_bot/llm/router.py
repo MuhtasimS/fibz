@@ -1,14 +1,16 @@
 from __future__ import annotations
-from typing import List
-import random
-from fibz_bot.config import settings
-from fibz_bot.utils.logging import get_logger
-from fibz_bot.utils.metrics import record_model_choice
 
-from google.cloud import aiplatform
+import random
+
 import vertexai
+from google.cloud import aiplatform
 from vertexai.generative_models import GenerativeModel
 from vertexai.language_models import TextEmbeddingModel
+
+from fibz_bot.config import settings
+from fibz_bot.utils.backoff import retry
+from fibz_bot.utils.logging import get_logger
+from fibz_bot.utils.metrics import record_model_choice
 
 log = get_logger(__name__)
 
@@ -39,6 +41,9 @@ class ModelRouter:
         log.info("model_choice", extra={"extra_fields": {"tier": tier, "prompt_tokens": prompt_tokens}})
         return model
 
-    def embed_texts(self, texts: List[str]) -> List[List[float]]:
-        embeddings = self.embed_model.get_embeddings(texts)
+    def embed_texts(self, texts: list[str]) -> list[list[float]]:
+        embeddings = retry(
+            lambda: self.embed_model.get_embeddings(texts),
+            operation="vertex_embed",
+        )
         return [e.values for e in embeddings]
