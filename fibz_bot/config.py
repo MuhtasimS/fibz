@@ -8,7 +8,7 @@ class Settings(BaseSettings):
 
     # Vertex
     VERTEX_PROJECT_ID: str
-    VERTEX_LOCATION: str = "us-central1"
+    VERTEX_LOCATION: str = "us-west1"
     VERTEX_MODEL_FLASH: str = "gemini-2.5-flash"
     VERTEX_MODEL_PRO: str = "gemini-2.5-pro"
     VERTEX_EMBED_MODEL: str = "text-embedding-004"

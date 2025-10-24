@@ -2,6 +2,10 @@
 requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
+[tool.setuptools]
+# If your setuptools supports it, this single line works:
+packages = ["fibz_bot"]
+
 [project]
 name = "fibz-bot"
 version = "0.4.0"

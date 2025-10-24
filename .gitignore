@@ -52,6 +52,9 @@ tmp/overflow/
 
 # ---- Project data ----
 .chroma/
+.chroma_data/
+chroma_data/
+legacy_logs/
 
 # ---- Editors / IDEs ----
 .vscode/
@@ -88,3 +91,5 @@ sa.json
 *.swp
 *.swo
 *~
+scripts/set_core_persona.py
+scripts/migrate_legacy.py
